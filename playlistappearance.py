@@ -5,10 +5,10 @@ from spotipyhelper import *
 if __name__ == '__main__':
 
 	token = generate_token('''
-							playlist-read-private 
-							playlist-read-collaborative 
-							user-follow-read 
-							''')
+		playlist-read-private 
+		playlist-read-collaborative 
+		user-follow-read 
+		''')
 
 	if token:
 		sp = subSpotify(auth=token)
