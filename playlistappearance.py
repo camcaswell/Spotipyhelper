@@ -25,6 +25,6 @@ if __name__ == '__main__':
 
 	playlists = sp.playlists_where_song_appears(sp.me()['id'], song['id'])
 
-	print("\n{} appears in: \n".format(song['name']))
+	print(f"\n{song['name']} appears in: \n")
 	for playlist in playlists:
 		print(playlist['name'])
