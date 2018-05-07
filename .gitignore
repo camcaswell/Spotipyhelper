@@ -1,6 +1,6 @@
 
-\.cache-cam_caswell
-
-spotify_config\.cfg
-
 __pycache__/
+
+*.cfg
+
+\.cache-cam_caswell
