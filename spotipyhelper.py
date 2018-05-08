@@ -5,14 +5,44 @@ import configparser
 import os
 from json import JSONDecodeError
 
+
+def splitlist(input_list, size):
+    # splits a list into a list of regularly-sized sublists
+    return [input_list[size*i:size*(i+1)] for i in range(int(len(input_list)/size + 1))]
+
 class subSpotify(spotipy.Spotify):
 
     ''' This is a subclass of spotipy.Spotify for the purpose of defining new methods.
-        If you ever want to construct a client with more parameters than just auth, __init__ needs to be rewritten.
+        If you ever want to construct a client with more parameters than just auth, __init__() needs to be rewritten.
     '''
 
-    def __init__(self, auth):
-        super().__init__(auth)
+    def __init__(self, token):
+        super().__init__(token)
+
+
+    def get_tracks_by_id(self, track_id_list):
+        ''' Handles splitting list of IDs into appropriately-sized chunks (50), then aggregating results into a single list
+        '''
+        tracks = []
+        for sublist in splitlist(track_id_list, 50):
+            tracks.extend(self.tracks(sublist)['tracks'])
+        return tracks
+
+    def get_albums_by_id(self, album_id_list):
+        ''' Handles splitting list of IDs into appropriately-sized chunks (20), then aggregating results into a single list
+        '''
+        albums = []
+        for sublist in splitlist(album_id_list, 20):
+            albums.extend(self.albums(sublist)['albums'])
+        return albums
+
+    def get_artists_by_id(self, artist_id_list):
+        ''' Handles splitting list of IDs into appropriately-sized chunks (50), then aggregating results into a single list
+        '''
+        artists = []
+        for sublist in splitlist(artist_id_list, 50):
+            artists.extend(self.artists(sublist)['artists'])
+        return artists
 
     def get_tracks_from_playlist(self, playlist_owner=None, playlist_id=None, playlist=None):
 
@@ -26,7 +56,7 @@ class subSpotify(spotipy.Spotify):
         if playlist:
             playlist_owner = playlist['owner']['id']
             playlist_id = playlist['id']
-        elif not (playlist_owner and playlist):
+        elif not (playlist_owner and playlist_id):
             raise TypeError("get_tracks_from_playlist() requires a playlist, or a username and playlist id as arguments")
 
         try:
@@ -36,11 +66,7 @@ class subSpotify(spotipy.Spotify):
             return []
 
         track_objs = self.aggregate_paging_results(query_result)
-        
-        tracks = []
-        for trackobj in track_objs:
-            tracks.append(trackobj['track'])
-        return tracks
+        return [t['track'] for t in track_objs]
 
     def aggregate_paging_results(self, paging_obj):
 
@@ -99,9 +125,7 @@ class subSpotify(spotipy.Spotify):
         elif not track_id_list:
             raise TypeError("add_tracks_to_playlist() requires a list of tracks or a list of track ids as an argument")
 
-        split_track_list = [track_id_list[100*i:100*(i+1)] for i in range(int(len(track_id_list)/100 + 1))]
-
-        for sublist in split_track_list:
+        for sublist in splitlist(track_id_list, 100):
             self.user_playlist_add_tracks(
                 username,
                 playlist_id,
@@ -130,7 +154,7 @@ def generate_token(scope):
     ''' Requires a spotify_config.cfg file with the relevant information in it
     '''
     config = configparser.ConfigParser()
-    config.read('spotify_config.cfg')
+    config.read('config.cfg')
     client_id = config.get('SPOTIFY', 'client_id')
     client_secret = config.get('SPOTIFY', 'client_secret')
     username = config.get('SPOTIFY', 'username')
