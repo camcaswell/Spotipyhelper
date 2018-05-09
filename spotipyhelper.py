@@ -95,7 +95,8 @@ class subSpotify(spotipy.Spotify):
         ''' user_playlist_tracks() returns a "paging object" which only holds 100 items at once,
             so this calls aggregate_paging_results() to get a single list of all the "playlist track objects".
 
-           "Playlist track objects" are glorified pointers to the actual track, so this method resolves the pointers and returns the actual tracks.
+            "Playlist track objects" are glorified pointers to the actual track,
+            so this method resolves the pointers and returns the actual tracks.
 
             If you want the time the track was added or the user who added it, this method is not for you.
         '''
@@ -108,7 +109,8 @@ class subSpotify(spotipy.Spotify):
         try:
             query_result = self.user_playlist_tracks(playlist_owner, playlist_id)
         except spotipy.SpotifyException as error:
-            print(f"Spotify threw and error while retrieving tracks from spotify:user:{playlist_owner}:playlist:{playlist_id}:\n{error}")
+            print(f"Spotify threw and error while retrieving tracks from"
+                + " spotify:user:{playlist_owner}:playlist:{playlist_id}:\n{error}")
             return []
 
         track_objs = self.aggregate_paging_results(query_result)
@@ -152,7 +154,8 @@ class subSpotify(spotipy.Spotify):
 
         return return_list
 
-    def add_tracks_to_playlist(self, username=None, playlist_id=None, playlist=None, track_list=None, track_id_list=None, position=None):
+    def add_tracks_to_playlist(self,
+        username=None, playlist_id=None, playlist=None, track_list=None, track_id_list=None, position=None):
         ''' The Spotify API will only add 100 songs to a playlist at a time,
             so this method takes care of splitting a list larger than 100 and feeding in the sublists.
         '''
