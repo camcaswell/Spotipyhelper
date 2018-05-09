@@ -4,10 +4,12 @@ from spotipyhelper import *
 from py2neo import Graph, Node, Relationship
  
 import configparser
+from functools import reduce
 
 # Change tx.merge() statements to tx.run('MERGE...') in order to print stats on how many new nodes were created etc
 # Consolidate duplicate albums/songs/artists(?) with a platonic node and SAME_AS relationships
 # Write methods for db/Spotify sync
+# Figure out what is wrong with refresh()
 
 class NoneAsKey(TypeError):
     ''' Raised when trying to construct a node by passing None as an attribute
@@ -19,47 +21,59 @@ class NoneAsKey(TypeError):
  
 class UserNode(Node):
     # id, name
-    def __init__(self, id, **otherAttrs):
+    def __init__(self, id, name=None, **otherAttrs):
         if not id:
             raise NoneAsKey('UserNode must have an id.')
         if not name:
             name = id
-        super().__init__('User', id=id, **otherAttrs)
+        super().__init__('User', id=id, name=name, **otherAttrs)
         self.__primarylabel__ = 'User'
         self.__primarykey__ = 'id'
  
 class PlaylistNode(Node):
     # id, name
-    def __init__(self, id, **otherAttrs):
+    def __init__(self, id, name=None, **otherAttrs):
         if not id:
             raise NoneAsKey('PlaylistNode must have an id.')
+        # py2neo.Node treats 'name' attributes specially and it doesn't like receiving a None value for 'name'
+        if name:
+            otherAttrs['name'] = name
         super().__init__('Playlist', id=id, **otherAttrs)
         self.__primarylabel__ = 'Playlist'
         self.__primarykey__ = 'id'
  
 class SongNode(Node):
     # id, name, pop, duration
-    def __init__(self, id, **otherAttrs):
+    def __init__(self, id, name=None, **otherAttrs):
         if not id:
             raise NoneAsKey('SongNode must have an id.')
+        # py2neo.Node treats 'name' attributes specially and it doesn't like receiving a None value for 'name'
+        if name:
+            otherAttrs['name'] = name
         super().__init__('Song', id=id, **otherAttrs)
         self.__primarylabel__ = 'Song'
         self.__primarykey__ = 'id'
  
 class ArtistNode(Node):
     # id, name, pop
-    def __init__(self, id, **otherAttrs):
+    def __init__(self, id, name=None, **otherAttrs):
         if not id:
             raise NoneAsKey('ArtistNode must have an id.')
+        # py2neo.Node treats 'name' attributes specially and it doesn't like receiving a None value for 'name'
+        if name:
+            otherAttrs['name'] = name
         super().__init__('Artist', id=id, **otherAttrs)
         self.__primarylabel__ = 'Artist'
         self.__primarykey__ = 'id'
  
 class AlbumNode(Node):
     #id, name, pop, release_date
-    def __init__(self, id, **otherAttrs):
+    def __init__(self, id, name=None, **otherAttrs):
         if not id:
             raise NoneAsKey('AlbumNode must have an id.')
+        # py2neo.Node treats 'name' attributes specially and it doesn't like receiving a None value for 'name'
+        if name:
+            otherAttrs['name'] = name
         super().__init__('Album', id=id, **otherAttrs)
         self.__primarylabel__ = 'Album'
         self.__primarykey__ = 'id'
@@ -110,7 +124,7 @@ def load_playlists(spclient, graph):
                 )
             plOwnerNode = UserNode(
                 id=playlist['owner']['id'],
-                name=(playlist['owner']['display_name']),
+                name=playlist['owner']['display_name'],
                 )    
             followsRel = Relationship(
                 userNode,
@@ -144,6 +158,7 @@ def load_songs(spclient, graph):
  
         plNode = PlaylistNode(
             id=playlist['id'],
+            name=playlist['name'],
             )
 
         for track_obj in spclient.aggregate_paging_results(spclient.user_playlist(owner['id'], playlist['id'])['tracks']):
@@ -159,7 +174,8 @@ def load_songs(spclient, graph):
 
             except NoneAsKey:
                 # This usually means that the song is a local file instead of a Spotify track.
-                print(f"This song from playlist: -{playlist['name']}- didn\'t have an id: {song['name']}")
+                # print(f"This song from playlist: -{playlist['name']}- didn\'t have an id: {song['name']}")
+                pass
 
             else:
                 inclRel = Relationship(
@@ -191,9 +207,7 @@ def load_albums(spclient, graph):
     assert len(albums) == len(track_objs), "Lengths of album list and track object list came out uneven somehow."
 
     for index, album in enumerate(albums):
-
         assert track_objs[index]['album']['id'] == album['id'], "Track and album lists fell out of sync somehow."
-
         albumNode = AlbumNode(
             id=album['id'],
             name=album['name'],
@@ -202,6 +216,7 @@ def load_albums(spclient, graph):
             )
         songNode = SongNode(
             id=track_objs[index]['id'],
+            name=track_objs[index]['name'],
             )
         alRel = Relationship(
             songNode,
@@ -235,6 +250,9 @@ def load_artists(spclient, graph):
                 )
             albumNode = AlbumNode(
                 id=album['id'],
+                name=album['name'],
+                pop=album['popularity'],
+                release_date=album['release_date'],
                 )
             releasedRel = Relationship(
                 artistNode,
@@ -253,18 +271,24 @@ def load_performs_rels(spclient, graph):
         **does not load any nodes**
     '''
     tx = graph.begin()
-
     songs_from_db = [record['s'] for record in tx.run('MATCH (s:Song) RETURN s')]
-    for track in spclient.get_tracks_by_id([song['id'] for song in songs_from_db]):
-        for artist in spclient.get_artists_by_id([a['id'] for a in track['artists']]):
+    tx.commit()
+
+    toMerge = []
+
+    tracks = spclient.get_tracks_by_id([song['id'] for song in songs_from_db])
+    for track in tracks:
+        artists = spclient.get_artists_by_id([a['id'] for a in track['artists']])
+        for artist in artists:
 
             artistNode = ArtistNode(
                 id=artist['id'],
                 name=artist['name'],
-                pop=artist['population'],
+                pop=artist['popularity'],
                 )
             songNode = SongNode(
                 id=track['id'],
+                name=track['name'],
                 )
             perfRel = Relationship(
                 artistNode,
@@ -272,10 +296,16 @@ def load_performs_rels(spclient, graph):
                 songNode,
                 )
 
-            tx.merge(artistNode)
-            #tx.merge(songNode)     not necessary because song nodes should already be in db
-            tx.merge(perfRel)
+            toMerge.extend([artistNode, perfRel])
+            spclient = subSpotify(scope='''
+                playlist-read-private 
+                playlist-read-collaborative 
+                user-follow-read 
+                ''')
 
+    largeSubgraph = reduce( (lambda x,y:x|y), toMerge)
+    tx = graph.begin()
+    tx.merge(largeSubgraph)
     tx.commit()
 
 
@@ -293,7 +323,9 @@ def load_genres(spclient, graph):
                 name=genre
                 )
             artistNode = ArtistNode(
-                id=artist['id']
+                id=artist['id'],
+                name=artist['name'],
+                pop=artist['popularity'],
                 )
             genreRel = Relationship(
                 artistNode,
@@ -321,7 +353,10 @@ def load_genre_album_rels(spclient, graph):
                 name=genre
                 )
             albumNode = AlbumNode(
-                id=album['id']
+                id=album['id'],
+                name=album['name'],
+                pop=album['popularity'],
+                release_date=album['release_date'],
                 )
             genreRel = Relationship(
                 albumNode,
@@ -335,9 +370,9 @@ def load_genre_album_rels(spclient, graph):
 
 
 
- 
+
 if __name__ == '__main__':
-    
+
     sp = subSpotify(scope='''
         playlist-read-private 
         playlist-read-collaborative 
@@ -350,7 +385,7 @@ if __name__ == '__main__':
     password = config.get('NEO4J', 'password')
     
     g = Graph('http://localhost:7474/db/data', user=user, password=password)
- 
+
     #user_ids = [s.strip() for s in config.get('NEO4J', 'friend_ids').split('\n')]
  
     #load_friends(sp, g, user_ids)
