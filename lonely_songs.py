@@ -4,14 +4,12 @@ from spotipyhelper import *
 
 if __name__ == '__main__':
     
-    token = generate_token('''
+    sp = subSpotify(scope='''
         user-library-read
         playlist-read-private
         playlist-modify-private
         ''')
-
-    sp = subSpotify(auth=token)
-
+    
     lonely_songs = sp.lonely_songs()
 
 

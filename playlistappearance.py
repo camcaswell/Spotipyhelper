@@ -4,17 +4,11 @@ from spotipyhelper import *
 
 if __name__ == '__main__':
 
-	token = generate_token('''
+	sp = subSpotify(scope='''
 		playlist-read-private 
 		playlist-read-collaborative 
 		user-follow-read 
 		''')
-
-	if token:
-		sp = subSpotify(auth=token)
-	else:
-		print("Failed to get token.")
-		quit()
 
 	song_uri = input("\nPaste song URI here: ")
 
@@ -34,7 +28,7 @@ if __name__ == '__main__':
 				else:
 					print(f"\n{song['name']} doesn't appear in any of your playlists.")
 
-			except (spotipy.SpotifyException):
+			except spotipy.SpotifyException:
 				print("Invalid URI")
 
 			song_uri = input("\nPaste song URI here: ")
