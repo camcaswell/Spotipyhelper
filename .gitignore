@@ -6,3 +6,5 @@ __pycache__/
 \.cache-cam_caswell
 
 test\.py
+
+*.txt
