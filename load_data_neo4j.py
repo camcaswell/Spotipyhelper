@@ -140,7 +140,7 @@ def merge_playlists(graph):
     mark0 = time()
     with graph.begin() as tx:
         friends_from_db = [record['f'] for record in tx.run('MATCH (f:Friend) RETURN f')]
-    print(f"Found {len(friends_from_db)} friends in the DB in {int(time()-mark0)} seconds.")
+    print(f"Found {len(friends_from_db)} friends in the DB in {time()-mark0:.1f} seconds.")
 
     spclient = subSpotify(scope='''
         playlist-read-private 
@@ -149,7 +149,7 @@ def merge_playlists(graph):
         ''')
     mark1 = time()
     users_from_spotify = [spclient.user(friend['id']) for friend in friends_from_db]
-    print(f"Retrieved {len(users_from_spotify)} corresponding users from Spotify in {int(time()-mark1)} seconds.")
+    print(f"Retrieved {len(users_from_spotify)} corresponding users from Spotify in {time()-mark1:.1f} seconds.")
 
     assert len(friends_from_db)==len(users_from_spotify), "Numbers of users from DB and Spotify came out uneven."
     for index, user in enumerate(users_from_spotify):
@@ -268,79 +268,94 @@ def load_albums(spclient, graph):
 
     tx.commit()
 
-def load_artists(spclient, graph):
-    ''' loads artist nodes into the db corresponding to the albums that are already loaded
-        also takes care of RELEASED relationships
-        **does not take care of PERFORMS relationships between artists and songs**
+def merge_artists(graph, firstcall=True):
     '''
-    tx = graph.begin()
+    '''
+    mark0 = time()
+    with graph.begin() as tx:
+        albums_from_db = [record['a'] for record in tx.run('MATCH (a:Album) WHERE NOT (a)<-[:RELEASED]-(:Artist) RETURN a')]
+    print(f"Found {len(albums_from_db)} albums in the DB without a RELEASED relationship in {time()-mark0:.1f} seconds.")
 
-    albums_from_db = [record['a'] for record in tx.run('MATCH (a:Album) RETURN a')]
-    albums = spclient.get_albums_by_id([album['id'] for album in albums_from_db])
+    mark1 = time()
+    spclient = subSpotify(scope='''
+        playlist-read-private 
+        playlist-read-collaborative 
+        user-follow-read 
+        ''')
+    albums_from_spotify = spclient.get_albums_by_id([a['id'] for a in albums_from_db])
+    print(f"Retrieved {len(albums_from_spotify)} corresponding albums from Spotify in {time()-mark1:.1f} seconds.")
+    assert len(albums_from_db)==len(albums_from_spotify), "Number of albums from the DB and Spotify are uneven."
 
-    for album in albums:
-        for artist in spclient.get_artists_by_id([a['id'] for a in album['artists']]):
+    artist_ids_to_lookup = []
+    rel_counter = 0
+    mark2 = time()
+    for index, album in enumerate(albums_from_spotify):
+        assert album['id']==albums_from_db[index]['id'], "Albums from the DB and Spotify fell outu of sync."
+        for artist in album['artists']:
+            with graph.begin() as tx:
+                artistNode = tx.evaluate('MATCH (a:Artist {id:$id}) RETURN a', id=artist['id'])
+                if artistNode:
+                    tx.merge(Relationship(
+                        artistNode,
+                        'RELEASED',
+                        albums_from_db[index],
+                        ))
+                    rel_counter += 1
+                else:
+                    assert firstcall, ("All artists are supposed to be merged after first call. "
+                        f"{artist['name']} was missing for album {album['name']}.")
+                    artist_ids_to_lookup.append(artist['id'])
+        if time()-mark2 > 60:
+            print(f"{int((time()-mark0)/60)} minutes elapsed. {rel_counter} total new PERFORMS relationships merged.")
+            mark2 = time()
 
-            artistNode = ArtistNode(
-                id=artist['id'],
-                name=artist['name'],
-                pop=artist['popularity'],
-                )
-            albumNode = AlbumNode(
-                id=album['id'],
-                name=album['name'],
-                pop=album['popularity'],
-                release_date=album['release_date'],
-                )
-            releasedRel = Relationship(
-                artistNode,
-                'RELEASED',
-                albumNode,
-                )
+    if firstcall and artist_ids_to_lookup:
+        spclient = subSpotify(scope='''
+            playlist-read-private 
+            playlist-read-collaborative 
+            user-follow-read 
+            ''')     
+        artists_to_merge = spclient.get_artists_by_id(artist_ids_to_lookup)
+        print(f"Attempting to merge {len(artists_to_merge)} new Artist nodes.")
+        for sublist in splitlist(artists_to_merge, 100):
+            subgraph = Subgraph([ ArtistNode(id=a['id'],name=a['name'],pop=a['popularity']) for a in sublist])
+            with graph.begin() as tx:
+                tx.merge(subgraph)
+        print(f"Calling merge_performs_rels() for the second pass.")
+        merge_performs_rels(graph, firstcall=False)
 
-            tx.merge(artistNode)
-            #tx.merge(albumNode) not necessary because the album node should already be in the db
-            tx.merge(releasedRel)
 
-    tx.commit()
+
 
 def merge_performs_rels(graph, firstcall=True):
     ''' Merges PERFORMS relationships between Artist and Song nodes based on Song nodes in the DB.
-        Merges a new Artist node if necessary.
+        Merges a new Artist node if necessary, and then its corresponding PERFORMS relationship on the second pass.
     '''
     print(f"merge_performs_rels() called with firstcall = {firstcall}")
     mark0 = time()
-
     with graph.begin() as tx:
-        query_result = tx.run('''
-            MATCH (s:Song)
-            WHERE NOT (s)<-[:PERFORMS]-(:Artist)
-            RETURN s
-            ''')
-    
+        query_result = tx.run('MATCH (s:Song) WHERE NOT (s)<-[:PERFORMS]-(:Artist) RETURN s')  
     songs_from_db = [record['s'] for record in query_result]
-
-    print(f"Found {len(songs_from_db)} songs in the DB after {int(time()-mark0)} seconds.")
+    print(f"Found {len(songs_from_db)} songs in the DB without a PERFORMS relationship in {time()-mark0:.1f} seconds.")
+    
     mark1 = time()
-
     spclient = subSpotify(scope='''
         playlist-read-private 
         playlist-read-collaborative 
         user-follow-read 
         ''')
     tracks_from_spotify = spclient.get_tracks_by_id([song['id'] for song in songs_from_db])
-    assert len(songs_from_db) == len(tracks_from_spotify), "Lengths of DB songs list and Spotify tracks list are uneven."
-
-    print(f"Retrieved {len(tracks_from_spotify)} corresponding tracks from Spotify after {int(time()-mark1)} seconds.")
+    print(f"Retrieved {len(tracks_from_spotify)} corresponding tracks from Spotify in {time()-mark1:.1f} seconds.")
+    assert len(songs_from_db) == len(tracks_from_spotify), "Number of songs from the DB and tracks from Spotify are uneven."
+   
     mark2 = time()
-
     rel_counter = 0
     artist_ids_to_lookup = []
     for index, track in enumerate(tracks_from_spotify):
         assert track['id'] == songs_from_db[index]['id'], "DB songs and Spotify songs fell out of sync."
         for artist in track['artists']:
             with graph.begin() as tx:
-                artistNode = tx.evaluate(f"MATCH (a:Artist) WHERE a.id='{sanitize(artist['id'])}' RETURN a")
+                artistNode = tx.evaluate('MATCH (a:Artist {id:$id}) RETURN a', id=artist['id'])
                 if artistNode:
                     tx.merge(Relationship(
                         artistNode,
@@ -349,13 +364,14 @@ def merge_performs_rels(graph, firstcall=True):
                         ))
                     rel_counter += 1
                 else:
-                    assert firstcall, f"All artists are supposed to be merged after first call. {track['name']} {artist['name']}"
+                    assert firstcall, (f"All artists are supposed to be merged after first call. "
+                        f"{artist['name']} was missing for track {track['name']}.")
                     artist_ids_to_lookup.append(artist['id'])
         if time()-mark2 > 60:
             print(f"{int((time()-mark0)/60)} minutes elapsed. {rel_counter} total new PERFORMS relationships merged.")
             mark2 = time()
 
-    if firstcall:
+    if firstcall and artist_ids_to_lookup:
         spclient = subSpotify(scope='''
             playlist-read-private 
             playlist-read-collaborative 
@@ -367,8 +383,7 @@ def merge_performs_rels(graph, firstcall=True):
             subgraph = Subgraph([ ArtistNode(id=a['id'],name=a['name'],pop=a['popularity']) for a in sublist])
             with graph.begin() as tx:
                 tx.merge(subgraph)
-
-        print(f"Calling merge_performs_rels() again.")
+        print(f"Calling merge_performs_rels() for the second pass.")
         merge_performs_rels(graph, firstcall=False)
 
 
@@ -401,7 +416,7 @@ def merge_genres(graph):
         assert artist['id'] == artists_from_db[index]['id'], "Artists from Spotify and DB fell out of sync."
         for genre_name in artist['genres']:
             with graph.begin() as tx:
-                genreNode = tx.evaluate(f"MATCH (g:Genre) WHERE g.name='{sanitize(genre_name)}' RETURN g")
+                genreNode = tx.evaluate('MATCH (g:Genre {name:$name}) RETURN g', name=genre_name)
                 if not genreNode:
                     genreNode = GenreNode(name=genre_name)
                     node_counter += 1
@@ -423,13 +438,15 @@ def merge_genres(graph):
     print(f"Artist genre associations completed in {int((time()-mark2)/60)} minutes.")
     print(f"{node_counter} new Genre nodes created. {rel_counter} GENRE_ASSOC relationships created.")
 
+    #Currently Spotify doesn't populate the 'genres' attribute of Album objects. They may start in the near future, though.
+    '''
     mark1 = mark2 = time()
     assert len(albums_from_db) == len(albums_from_spotify), "Number of albums from DB and Spotify came out uneven."
     for index, album in enumerate(albums_from_spotify):
         assert album['id'] == albums_from_db[index]['id'], "Albums from Spotify and DB fell out of sync."
         for genre_name in album['genres']:
             with graph.begin() as tx:
-                genreNode = tx.evaluate(f"MATCH (g:Genre) WHERE g.name='{sanitize(genre_name)}' RETURN g")
+                genreNode = tx.evaluate('MATCH (g:Genre {name:$name}) RETURN g', name=genre_name)
                 if not genreNode:
                     genreNode = GenreNode(name=genre_name)
                     genre_counter += 1
@@ -450,6 +467,7 @@ def merge_genres(graph):
 
     print(f"Album genre associations completed in {int((time()-mark2)/60)} minutes.")
     print(f"{node_counter} new Genre nodes created. {rel_counter} GENRE_ASSOC relationships created.")
+    '''
 
 
 if __name__ == '__main__':
@@ -470,9 +488,9 @@ if __name__ == '__main__':
     #user_ids = [s.strip() for s in config.get('NEO4J', 'friend_ids').split('\n')]
  
     #load_friends(sp, g, user_ids)
-    merge_playlists(g)
+    #merge_playlists(g)
     #load_songs(sp, g)
     #load_albums(sp, g)
-    #load_artists(sp, g)
+    merge_artists(g)
     #merge_performs_rels(g)
     #merge_genres(g)
