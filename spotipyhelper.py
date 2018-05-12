@@ -63,10 +63,10 @@ class subSpotify(spotipy.Spotify):
             raise TypeError("Cannot refresh client without a scope available."
                 + "\nTry constructing the original client by passing the scope instead of a whole token.")
 
-    def get_users_by_id(self, user_id_list):
-        ''' Handles looking up a list of user IDs one at a time.
+    def get_users_by_id(self, user_ids):
+        ''' Handles looking up an iterable of user IDs one at a time, then returning an aggregated list of users.
         '''
-        if user_id_list:
+        if user_ids:
             users = []
             for user_id in user_id_list:
                 users.append(self.user(user_id))
@@ -74,40 +74,52 @@ class subSpotify(spotipy.Spotify):
         else:
             return []
 
-    def get_tracks_by_id(self, track_id_list):
-        ''' Handles splitting list of IDs into appropriately-sized chunks (50), then aggregating results into a single list.
+    def get_tracks_by_id(self, track_ids):
+        ''' Handles splitting an iterable of IDs into appropriately-sized chunks (50), then then returning a single list of aggregated tracks.
         '''
-        if track_id_list:
+        if track_ids:
             tracks = []
-            for sublist in splitlist(track_id_list, 50):
+            for sublist in splitlist(list(track_ids), 50):
                 tracks.extend(self.tracks(sublist)['tracks'])
             return tracks
         else:
             return []
 
-    def get_albums_by_id(self, album_id_list):
-        ''' Handles splitting list of IDs into appropriately-sized chunks (20), then aggregating results into a single list.
+    def get_albums_by_id(self, album_ids):
+        ''' Handles splitting an iterable of IDs into appropriately-sized chunks (20), then returning a single list of aggregated albums.
         '''
-        if album_id_list:
+        if album_ids:
             albums = []
-            for sublist in splitlist(album_id_list, 20):
+            for sublist in splitlist(list(album_ids), 20):
                 albums.extend(self.albums(sublist)['albums'])
             return albums
         else:
             return []
 
-    def get_artists_by_id(self, artist_id_list):
-        ''' Handles splitting list of IDs into appropriately-sized chunks (50), then aggregating results into a single list.
+    def get_artists_by_id(self, artist_ids):
+        ''' Handles splitting an iterable of IDs into appropriately-sized chunks (50), then returning a single list of aggregated artists.
         '''
-        if artist_id_list:
+        if artist_ids:
             artists = []
-            for sublist in splitlist(artist_id_list, 50):
+            for sublist in splitlist(list(artist_ids), 50):
                 try:
                     artists.extend(self.artists(sublist)['artists'])
                 except JSONDecodeError as error:
                     print(f"Encountered JSONDecodeError while attempting to retreive artists for these ids: {sublist}")
                     continue
             return artists
+        else:
+            return []
+
+    def get_playlists_by_id(self, id_pairs):
+        ''' Handles looking up playlists one at a time with pairs of IDs
+            where an ID pair looks like: (owner_id, playlist_id)
+        '''
+        if id_pairs:
+            playlists = []
+            for pair in id_pairs:
+                playlists.append(self.user_playlist(pair[0], pair[1]))
+            return playlists
         else:
             return []
 
