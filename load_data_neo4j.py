@@ -21,7 +21,10 @@ class NoneAsKey(TypeError):
 
  
 class UserNode(Node):
-    # id, name
+    ''' A subclass of py2neo.Node specifically for User nodes.
+        Node key: id
+        Other properties: name
+    '''
     def __init__(self, id, name=None, **otherAttrs):
         if not id:
             raise NoneAsKey('UserNode must have an id.')
@@ -32,7 +35,10 @@ class UserNode(Node):
         self.__primarykey__ = 'id'
  
 class PlaylistNode(Node):
-    # id, name
+    ''' A subclass of py2neo.Node specifically for Playlist nodes.
+        Node key: id
+        Other properties: name
+    '''
     def __init__(self, id, name=None, **otherAttrs):
         if not id:
             raise NoneAsKey('PlaylistNode must have an id.')
@@ -44,7 +50,10 @@ class PlaylistNode(Node):
         self.__primarykey__ = 'id'
  
 class SongNode(Node):
-    # id, name, pop, duration
+    ''' A subclass of py2neo.Node specifically for Song nodes.
+        Node key: id
+        Other properties: name, pop, duration
+    '''
     def __init__(self, id, name=None, **otherAttrs):
         if not id:
             raise NoneAsKey('SongNode must have an id.')
@@ -56,7 +65,10 @@ class SongNode(Node):
         self.__primarykey__ = 'id'
  
 class ArtistNode(Node):
-    # id, name, pop
+    ''' A subclass of py2neo.Node specifically for Artist nodes.
+        Node key: id
+        Other properties: name, pop
+    '''
     def __init__(self, id, name=None, **otherAttrs):
         if not id:
             raise NoneAsKey('ArtistNode must have an id.')
@@ -68,7 +80,10 @@ class ArtistNode(Node):
         self.__primarykey__ = 'id'
  
 class AlbumNode(Node):
-    #id, name, pop, release_date
+    ''' A subclass of py2neo.Node specifically for Album nodes.
+        Node key: id
+        Other properties: name, pop, release_date
+    '''
     def __init__(self, id, name=None, **otherAttrs):
         if not id:
             raise NoneAsKey('AlbumNode must have an id.')
@@ -80,7 +95,9 @@ class AlbumNode(Node):
         self.__primarykey__ = 'id'
  
 class GenreNode(Node):
-    # name
+    ''' A subclass of py2neo.Node specifically for Genre nodes.
+        Node key: name
+    '''
     def __init__(self, name):
         if not name:
             raise NoneAsKey('GenreNode must have a name.')
@@ -88,13 +105,16 @@ class GenreNode(Node):
         self.__primarylabel__ = 'Genre'
         self.__primarykey__ = 'name'
 
+
 def sanitize(stringyboi):
+    ''' For sanitizing strings to be used in DB queries.
+        You should probably be using parameters instead.
+    '''
     return stringyboi.translate(str.maketrans({
         '\'':'\\\'',
         '\"':'\\\"',
         '\\':'\\\\',
         }))
-
  
 def load_friends(spclient, graph, user_ids): 
     ''' loads friends into the db from a list of their ids
@@ -112,46 +132,56 @@ def load_friends(spclient, graph, user_ids):
 
     tx.commit()
 
-def load_playlists(spclient, graph):   
-    ''' loads playlists followed by friends into the db
-        also takes care of FOLLOWS relationships, OWNS relationships,
-        and users who own the playlists that are followed by friends
+def merge_playlists(graph):
+    ''' Merges playlists that are followed by friends in the DB.
+        Also merges FOLLOWS and OWNS relationships for the playlists.
+        If the owner of the playlist is not already in the DB, it merges a new User node.
     '''
-    tx = graph.begin()
+    mark0 = time()
+    with graph.begin() as tx:
+        friends_from_db = [record['f'] for record in tx.run('MATCH (f:Friend) RETURN f')]
+    print(f"Found {len(friends_from_db)} friends in the DB in {int(time()-mark0)} seconds.")
 
-    for user in [record['f'] for record in tx.run("MATCH (f:Friend) RETURN f")]:
+    spclient = subSpotify(scope='''
+        playlist-read-private 
+        playlist-read-collaborative 
+        user-follow-read 
+        ''')
+    mark1 = time()
+    users_from_spotify = [spclient.user(friend['id']) for friend in friends_from_db]
+    print(f"Retrieved {len(users_from_spotify)} corresponding users from Spotify in {int(time()-mark1)} seconds.")
+
+    assert len(friends_from_db)==len(users_from_spotify), "Numbers of users from DB and Spotify came out uneven."
+    for index, user in enumerate(users_from_spotify):
+        assert user['id']==friends_from_db[index]['id'], "Users from DB and Spotify fell out of sync."
         for playlist in spclient.aggregate_paging_results(spclient.user_playlists(user['id'])):
- 
-            plNode = PlaylistNode(
-                id=playlist['id'],
-                name=playlist['name'],
-                )
-            userNode = UserNode(
-                id=user['id'],
-                name=user['name'],
-                )
-            plOwnerNode = UserNode(
-                id=playlist['owner']['id'],
-                name=playlist['owner']['display_name'],
-                )    
-            followsRel = Relationship(
-                userNode,
-                'FOLLOWS',
-                plNode,
-                )
-            ownsRel = Relationship(
-                plOwnerNode,
-                'OWNS',
-                plNode,
-                )
- 
-            tx.merge(plNode)
-            #tx.merge(userNode)     not necessary because user nodes should already be in the db
-            tx.merge(plOwnerNode)
-            tx.merge(followsRel)
-            tx.merge(ownsRel)
- 
-    tx.commit()
+            with graph.begin() as tx:
+                playlistNode = tx.evaluate('MATCH (p:Playlist {id:$id}) RETURN p', id=playlist['id'])
+                if not playlistNode:
+                    playlistNode = PlaylistNode(
+                        id=playlist['id'],
+                        name=playlist['name'],
+                        )
+                    tx.merge(playlistNode)
+                    print(f"Created a new Playlist node for {playlist['name']}")
+                tx.merge(Relationship(
+                    friends_from_db[index],
+                    'FOLLOWS',
+                    playlistNode,
+                    ))
+                ownerNode = tx.evaluate('MATCH (u:User {id:$id}) RETURN u', id=playlist['owner']['id'])
+                if not ownerNode:
+                    ownerNode = UserNode(
+                        id=playlist['owner']['id'],
+                        name=playlist['owner']['name'],
+                        )
+                    tx.merge(ownerNode)
+                    print(f"Created a new User node for {playlist['owner']['id']}")
+                tx.merge(Relationship(
+                    ownerNode,
+                    'OWNS',
+                    playlistNode,
+                    ))
  
 def load_songs(spclient, graph):
     ''' loads songs that appear on already-loaded playlists into the db
@@ -275,10 +305,9 @@ def load_artists(spclient, graph):
     tx.commit()
 
 def merge_performs_rels(graph, firstcall=True):
-    ''' Merges PERFORMS relationships between Artist and Song nodes.
+    ''' Merges PERFORMS relationships between Artist and Song nodes based on Song nodes in the DB.
         Merges a new Artist node if necessary.
     '''
-
     print(f"merge_performs_rels() called with firstcall = {firstcall}")
     mark0 = time()
 
@@ -291,7 +320,7 @@ def merge_performs_rels(graph, firstcall=True):
     
     songs_from_db = [record['s'] for record in query_result]
 
-    print(f"{len(songs_from_db)} songs from db found after {time()-mark0} seconds.")
+    print(f"Found {len(songs_from_db)} songs in the DB after {int(time()-mark0)} seconds.")
     mark1 = time()
 
     spclient = subSpotify(scope='''
@@ -302,7 +331,7 @@ def merge_performs_rels(graph, firstcall=True):
     tracks_from_spotify = spclient.get_tracks_by_id([song['id'] for song in songs_from_db])
     assert len(songs_from_db) == len(tracks_from_spotify), "Lengths of DB songs list and Spotify tracks list are uneven."
 
-    print(f"{len(tracks_from_spotify)} tracks from Spotify found after {time()-mark1} seconds.")
+    print(f"Retrieved {len(tracks_from_spotify)} corresponding tracks from Spotify after {int(time()-mark1)} seconds.")
     mark2 = time()
 
     rel_counter = 0
@@ -344,16 +373,15 @@ def merge_performs_rels(graph, firstcall=True):
 
 
 def merge_genres(graph):
-    ''' Merges genre nodes from artist and album nodes already in the db
-        also takes care of GENRE_ASSOC relationships
+    ''' Merges Genre nodes from Artist nodes already in the DB.
+        Also takes care of GENRE_ASSOC relationships between Artist and Genre nodes.
     '''
     mark0 = time()
-
     with graph.begin() as tx:
         artists_from_db = [record['a'] for record in tx.run('MATCH (a:Artist) RETURN a')]
-        print(f"Found {len(artists_from_db)} artists in DB.")
+        print(f"Found {len(artists_from_db)} artists in the DB.")
         albums_from_db = [record['b'] for record in tx.run('MATCH (b:Album) RETURN b')]
-        print(f"Found {len(albums_from_db)} albums in DB.")
+        print(f"Found {len(albums_from_db)} albums in the DB.")
 
     spclient = subSpotify(scope='''
         playlist-read-private 
@@ -361,9 +389,9 @@ def merge_genres(graph):
         user-follow-read 
         ''')
     artists_from_spotify = spclient.get_artists_by_id([a['id'] for a in artists_from_db])
-    print(f"Found {len(artists_from_spotify)} artists from Spotify.")
+    print(f"Retrieved {len(artists_from_spotify)} corresponding artists from Spotify.")
     albums_from_spotify = spclient.get_albums_by_id([b['id'] for b in albums_from_db])
-    print(f"Found {len(albums_from_spotify)} albums from Spotify.")
+    print(f"Retrieved {len(albums_from_spotify)} corresponding albums from Spotify.")
 
     node_counter = 0
     rel_counter = 0
@@ -442,9 +470,9 @@ if __name__ == '__main__':
     #user_ids = [s.strip() for s in config.get('NEO4J', 'friend_ids').split('\n')]
  
     #load_friends(sp, g, user_ids)
-    #load_playlists(sp, g)
+    merge_playlists(g)
     #load_songs(sp, g)
     #load_albums(sp, g)
     #load_artists(sp, g)
     #merge_performs_rels(g)
-    merge_genres(g)
+    #merge_genres(g)
