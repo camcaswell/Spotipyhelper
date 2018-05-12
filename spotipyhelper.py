@@ -55,17 +55,18 @@ class subSpotify(spotipy.Spotify):
                 client_id=client_id,
                 client_secret=client_secret,
                 redirect_uri="http://localhost:8888/callback/",
-            )  
+            )
+            
         return token
-      
 
     def refresh(self):
+        ''' Supposed to get a freshly authorized client, but doesn't seem to be working at the moment.
+        '''
         if self._scope:
             return subSpotify(self._scope)
         else:
             raise TypeError("Cannot refresh client without a scope available."
                 + "\nTry constructing the original client by passing the scope instead of a whole token.")
-
 
     def get_tracks_by_id(self, track_id_list):
         ''' Handles splitting list of IDs into appropriately-sized chunks (50), then aggregating results into a single list.
@@ -88,7 +89,11 @@ class subSpotify(spotipy.Spotify):
         '''
         artists = []
         for sublist in splitlist(artist_id_list, 50):
-            artists.extend(self.artists(sublist)['artists'])
+            try:
+                artists.extend(self.artists(sublist)['artists'])
+            except JSONDecodeError as error:
+                print(f"Encountered JSONDecodeError while attempting to retreive artists for these ids: {sublist}")
+                continue
         return artists
 
     def get_tracks_from_playlist(self, playlist_owner=None, playlist_id=None, playlist=None):
