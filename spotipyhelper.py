@@ -5,6 +5,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 import configparser
 import os
 from json import JSONDecodeError
+import datetime
 
 
 class subSpotify(spotipy.Spotify):
@@ -123,6 +124,12 @@ class subSpotify(spotipy.Spotify):
         else:
             return []
 
+    def get_saved_tracks(self):
+        return [t['track'] for t in self.aggregate_paging_results(self.current_user_saved_tracks())]
+
+    def get_saved_artists(self):
+        return list({artist['id'] : artist for song in self.get_saved_tracks() for artist in song["artists"]}.values())
+
     def get_tracks_from_playlist(self, playlist_owner=None, playlist_id=None, playlist=None):
         ''' user_playlist_tracks() returns a "paging object" which only holds 100 items at once,
             so this calls aggregate_paging_results() to get a single list of all the "playlist track objects".
@@ -224,6 +231,38 @@ class subSpotify(spotipy.Spotify):
 
         return list(lonely_songs.values())
 
+    def albums_after(self, datestring, artists=[]):
+        ''' datestring: 'yyyymmdd'
+            Returns a dict of all albums released after the given date from artists in your saved library.
+        '''
+        cutoff = parse_date(datestring)
+        if not artists:
+            artists = self.get_saved_artists()
+
+        new_albums = {}
+        for artist in artists:
+            try:
+                albums = sp.aggregate_paging_results(sp.artist_albums(artist['id']))
+            except:
+                #Refresh token
+                sp = subSpotify(scope='''
+                    playlist-read-private 
+                    playlist-read-collaborative 
+                    user-follow-read 
+                    ''')
+                albums = sp.aggregate_paging_results(sp.artist_albums(artist['id']))
+
+            if albums:
+                albums_with_dates = [ (a,parse_date(a['release_date'])) for a in albums]
+                albums_with_dates = [ (a,d) for a,d in albums_with_dates if d>=cutoff]
+                albums_with_dates.sort(key=lambda p: p[1])
+                new_albums[artist['id']] = (artist, albums_with_dates)
+            else:
+                print(f'Couldn\'t find any albums for {artist["id"]}')
+                continue
+        return new_albums
+
+
 def gen_creds():
     #currently unsure whether this works
     with open('config.cfg') as fp:
@@ -239,3 +278,27 @@ def splitlist(input_list, size):
     ''' splits a list into a list of regularly-sized sublists
     '''
     return [input_list[size*i:size*(i+1)] for i in range(int(len(input_list)/size + 1))]
+
+def parse_date(datestring):
+    ''' date: yyyy[-mm[-dd]?]? -> datetime.date(yyyy, mm, dd)
+        The release dates for albums may not have months or days specified.
+    '''
+    datestring.replace('/', '-')
+    date_split = datestring.split('-')
+
+    # month and day are 1 if not defined
+    if len(date_split)==1:
+        date_split.extend(["1", "1"])
+    elif len(date_split)==2:
+        date_split.extend(["1"])
+    elif len(date_split)!=3:
+        raise ValueError("Date string has the wrong number of components.")
+
+    # Spotify data is garbage
+    if date_split[0] == '0000':
+        date_split[0] = '0001'
+
+    if len(date_split[0])!=4:
+        raise ValueError("Year component of date string is the wrong length.")
+
+    return datetime.date(*[int(s) for s in date_split])
