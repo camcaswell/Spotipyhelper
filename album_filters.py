@@ -1,26 +1,98 @@
+import re
+
 def garbage_album(album):
+
+    if len(album['artists']) > 10:
+        return True
+
     pat = re.compile('|'.join([
-            r"[0-9]0(?:\')?s",
-            r"\bClassic\b",
+
+            #Genres
             r"\bR[n&]B\b",
-            r"\bAlt(?: |-)Rock\b",
-            r"\bHip(?: |-)Hop\b",
-            r"\b(?:Summer|Fall|Winter|Spring|Christmas) (?:Pop|Rock)",
-            r"\b[0-9]{2,4} Greatest\b",
-            r"\([^\(]*Live[^\)]*\)",
-            r"\bPlaylist\b",
-            r"\bOriginal.*(?:Score|Soundtrack)\b",
-            r"\bInstrumentals?\b",
+            r"\bHip[ -]?Hop\b",
+            r"\bR'N'B\b",
+            r"\bPop\b",
+            r"\bSoul\b",
+            r"\bCountry\b",
+            r"\bJazz\b",
+            r"\bDance\b",
+            r"\bElectronic\b",
+            r"\bRock\b",
+            r"\bAlt(?:ernative)?\b",
+            r"\bFunk\b",
+            r"\bRap\b",
+
+            #Compilations
+            r"[0-9]0(?:[\']?s)?\b",
+            r"\b(?:19|20)[0-9]{2}\b",
+            r"\bCompilation\b",
+            r"\bGreatest\b",
+            r"\bGreat[s]?\b",
+            r"\bBest Of\b",
+            r"\bClassic[s]?\b",
+            r"\bOldies\b",
+            r"\bNow That\'?s What I Call\b",
+            r"\bHits\b",
+            r"\bOne Hit Wonders\b",
+            r"\bCollection\b",
+            r"\bAward[ -]Winning\b",
+            r"\bUltimate\b",
+            r"\bBallads",
+
+            #Playlists
+            r"\b(?:Summer|Autumn|Winter|Spring|Christmas)\b",
+            r"\bSummertime\b",
+            r"\bSeason(?:al|\'s)?\b",
+            r"\bHoliday[s]?\b",
+            r"\bBBQ\b",
+            r"\bBarbecue\b",
+            r"\bPlaylist[s]?\b",
+            r"\bSong[s]?\b",
+            r"\bBanger[sz]?\b",
+            r"\bChilled\b",
+            r"\bBeats\b",
+            r"\bParty\b",
+            r"\bMusic\b",
+            r"\bRomantic\b",
+            r"\bMood[sz]?\b",
+            r"\bKaraoke\b",
+            r"\bThrowback[s]?\b",
+            r"\bRewind[s]?\b",
+            r"\bSnuggle\b",
+            r"\bGroove[sz]?\b",
+            r"\bTune[sz]?\b",
+            r"\bVibe[sz]?\b",
+            r"\bBop[sz]?\b",
+            r"\bJam[sz]?\b",
+            r"\bAnthem[sz]?\b",
+            r"\bMellow\b",
+            r"\bPositive\b",
+            r"\bJukebox\b",
+
+            #Rereleases
+            r"[\]\(][^\(\[\)\]]*Live[^\(\[\)\]]*[\)\]]",
+            r"\bInstrumental[s]?\b",
             r"\bRemaster(?:ed)?\b",
             r"\bAcoustic\b",
-            r"\bNow That\'?s What I Call Music\b",
+            r"\bRemix(?:es)?\b",
+            r"\bVersion\b",
+            r"\bVol(?:\.|ume)?\b",
+            r"\bDeluxe\b",
+            r"\bMix(?:es)?\b",
+            r"\bAlbum[s]?\b",
+
+            #Other
+            r"\bOriginal\b.*\bScore[s]?\b",
+            r"\bSoundtrack[s]?\b",
+            r"\bMovie\b",
+
             ]),
         re.IGNORECASE
         )
-    return len(album['artists']) > 10 or re.search(pat, album['name'])
+    return re.search(pat, album['name'])
 
 def garbage_filter_test():
-    tests = [
+    names = [
         'Fast Hip-Hop Urban R&B',
         '80\'s Supershow   ',
         'Beat the World (Original Motion Picture Soundtrack)',
@@ -39,8 +111,17 @@ def garbage_filter_test():
         'Playlist: only the bangers',
         'hip hop on pop',
         'Rnb',
+        'old album (new version)',
+        'instrumental',
     ]
+
+    tests = [{'name':name, 'artists':[]} for name in names]
+    tests.append({'name': 'collab album', 'artists':['drake' for _ in range(11)]})
 
     for test in tests:
         print()
-        print(test, garbage_album(test))
+        print(test)
+        print(garbage_album(test))
+
+if __name__ == '__main__':
+    garbage_filter_test()
